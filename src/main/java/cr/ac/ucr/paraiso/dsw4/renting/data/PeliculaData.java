@@ -1,17 +1,25 @@
 package cr.ac.ucr.paraiso.dsw4.renting.data;
 
+import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Types;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import javax.sql.DataSource;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.ResultSetExtractor;
+import org.springframework.jdbc.core.SqlOutParameter;
+import org.springframework.jdbc.core.SqlParameter;
+import org.springframework.jdbc.core.simple.SimpleJdbcCall;
 
 import cr.ac.ucr.paraiso.dsw4.renting.domain.Actor;
 import cr.ac.ucr.paraiso.dsw4.renting.domain.Genero;
@@ -22,6 +30,13 @@ public class PeliculaData {
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
+
+    private DataSource dataSource;
+
+    public PeliculaData (DataSource dataSource) {
+        this.dataSource = dataSource;
+    }
+    
 
     public List<Pelicula> findMoviesByTitleOrGenre(String title, String genre) {
         String sqlSelect = """
@@ -51,7 +66,58 @@ public class PeliculaData {
                 String titleLike = (title == null || title == "" ? "" : "%" + title.trim() + "%");
                 String genreLike = (genre == null || genre == "" ? "" : "%" + genre.trim() + "%");
         return jdbcTemplate.query(sqlSelect, new PeliculaExtractor(), titleLike, genreLike);
+    }// findMoviesByTitleOrGenre
+
+    public Pelicula save(Pelicula pelicula) throws SQLException{
+        
+        Connection conexion = null;
+		try {
+			conexion = dataSource.getConnection();
+			conexion.setAutoCommit(false);
+            // Llamada al procedimiento almacenado para insertar la película
+             SimpleJdbcCall simpleJdbcCallPelicula = new SimpleJdbcCall(jdbcTemplate).
+                    withCatalogName("dbo").
+                    withProcedureName("Pelicula_Insert").withoutProcedureColumnMetaDataAccess().
+                    declareParameters(new SqlOutParameter("@pelicula_id", Types.INTEGER)).
+                    declareParameters(new SqlParameter("@titulo", Types.VARCHAR)).
+                    declareParameters(new SqlParameter("@subtitulada", Types.BIT)).
+                    declareParameters(new SqlParameter("@estreno", Types.BIT)).
+                    declareParameters(new SqlParameter("@genero_id", Types.INTEGER));
+
+            Map<String, Object> outParameters = simpleJdbcCallPelicula.execute(pelicula.getTitulo(), pelicula.isSubtitulada(), pelicula.isEstreno(), pelicula.getGenero().getGeneroId());
+            pelicula.setPeliculaId(Integer.parseInt(outParameters.get("@pelicula_id").toString()));
+           
+            SimpleJdbcCall simpleJdbcCallPeliculaActor = new SimpleJdbcCall(jdbcTemplate).
+                    withCatalogName("dbo").
+                    withProcedureName("PeliculaActor_Insert").withoutProcedureColumnMetaDataAccess().
+                    declareParameters(new SqlParameter("@pelicula_id", Types.INTEGER)).
+                    declareParameters(new SqlParameter("@actor_id", Types.INTEGER));
+
+            for(Actor actor:pelicula.getActores())
+                simpleJdbcCallPeliculaActor.execute(pelicula.getPeliculaId(), actor.getActorId());
+            conexion.commit();////oooooooojooooooooooooooooooooooooooooooooooooooooooooooooooooo
+        }// try
+        catch (SQLException e) {
+            if (conexion != null) { 
+                    conexion.rollback();
+                
+            }// if
+            throw e;
+        } finally { 
+                if (conexion != null) {
+                    try {
+                        conexion.close();
+                    } catch (SQLException ex) {
+                        ex.printStackTrace();
+                    }
+                }
+        }// finally
+
+            
+           
+        return pelicula;
     }
+
 }
 class PeliculaExtractor implements ResultSetExtractor<List<Pelicula>>{
 
